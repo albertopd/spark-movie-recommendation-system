@@ -15,8 +15,14 @@ st.set_page_config(page_title="Movie Recommendations", layout="wide")
 
 
 # ---------- RECOMMENDATIONS ENGINE ----------
+@st.cache_data
+def _load_recommendations_engine():
+    """Load the MovieRecommendationsEngine with caching."""
+    return MovieRecommendationsEngine(MAPPING_CSV, FACTORS_NPY)
+
+
 try:
-    mrengine = MovieRecommendationsEngine(MAPPING_CSV, FACTORS_NPY)
+    mrengine = _load_recommendations_engine()
 except Exception as e:
     st.error(
         f"Could not load recommendations engine artifacts. Make sure `{MAPPING_CSV}` and `{FACTORS_NPY}` exist.\n\nError: {e}"
