@@ -148,7 +148,6 @@ else:
 
     # Display recommendations
     if st.session_state.last_recs:
-        st.write("**Your Recommendations:**")
         for title, score in st.session_state.last_recs:
             col1, col2 = st.columns([8, 1])
             with col1:
