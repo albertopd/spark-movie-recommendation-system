@@ -14,8 +14,7 @@ FACTORS_NPY = "artifacts/movie_factors.npy"
 st.set_page_config(page_title="Movie Recommendations", layout="wide")
 
 
-
-# ---------- LOAD RECOMMENDATIONS ENGINE ----------
+# ---------- RECOMMENDATIONS ENGINE ----------
 try:
     mrengine = MovieRecommendationsEngine(MAPPING_CSV, FACTORS_NPY)
 except Exception as e:
@@ -25,87 +24,35 @@ except Exception as e:
     st.stop()
 
 
+@st.cache_data(ttl=600)
+def _cached_search(query: str, limit: int = 10):
+    """Cache mrengine.search_titles results for a given query."""
+    if not query or not query.strip():
+        return []
+    return mrengine.search_titles(query.strip(), limit=limit)
+
+
+# ---------- SESSION STATE ----------
+if "favorites" not in st.session_state:
+    st.session_state.favorites = []
+if "search_results" not in st.session_state:
+    st.session_state.search_results = {"query": "", "results": []}
+if "last_recs" not in st.session_state:
+    st.session_state.last_recs = []
+
+
 # ---------- HELPERS ----------
 def _get_title_for(movieid: int) -> str:
-    """
-    Get the movie title for a given movieId from the recommendations engine's mapping.
-
-    Args:
-        movieid (int): Movie ID to look up.
-    Returns:
-        str: Movie title if found, else the movieId as string.
-    """
+    """Get the movie title for a given movieId."""
     row = mrengine.mapping[mrengine.mapping["movieId"] == movieid]
     if len(row):
         return row["title"].values[0]
     return str(movieid)
 
 
-def _add_favorite(movieid: int):
-    """
-    Add a movieId to the favorites list in session state if not already present.
-
-    Args:
-        movieid (int): Movie ID to add.
-    """
-    if movieid not in st.session_state.favorites:
-        st.session_state.favorites.append(movieid)
-
-
-def _remove_favorite_cb(movieid: int):
-    """
-    Callback to remove a single movieId from favorites in session state.
-
-    Args:
-        movieid (int): Movie ID to remove.
-    """
-    favs = st.session_state.get("favorites", [])
-    st.session_state.favorites = [m for m in favs if m != movieid]
-    # clear last_recs so UI updates sensibly
-    st.session_state.last_recs = []
-
-
-def _clear_favorites_cb():
-    """
-    Callback to clear all favorites from session state.
-    """
-    st.session_state.favorites = []
-    st.session_state.last_recs = []
-
-
-def _render_search_results(results):
-    """
-    Render a list of search results as selectable movie cards in the UI.
-
-    Args:
-        results (list): List of dicts from mrengine.search_titles.
-    """
-    for row in results:
-        title = row.get("title") or row.get("title") or ""
-        movieid = int(row.get("movieId"))
-
-        col_a, col_b = st.columns([8, 1])
-        with col_a:
-            st.markdown(f"**{title}**")
-        with col_b:
-            if st.button("➕", key=f"add_{movieid}", help="Add to favorites"):
-                _add_favorite(movieid)
-
-
-# ---------- SESSION STATE ----------
-if "favorites" not in st.session_state:
-    st.session_state.favorites = []
-if "last_search" not in st.session_state:
-    st.session_state.last_search = {"query": "", "results": []}
-if "last_recs" not in st.session_state:
-    st.session_state.last_recs = []
-
-
 # ---------- PAGE HEADER ----------
 st.title("🎬 Movie Recommendations")
-st.write(
-    "Search for movies, add them to your favorites list and get personalized suggestions."
-)
+st.write("Search for movies, add them to your favorites and get personalized suggestions.")
 
 left_col, right_col = st.columns([3, 3], gap="large")
 
@@ -116,10 +63,9 @@ with left_col:
 
     col1, col2 = st.columns([8, 1])
     with col1:
-        q = st.text_input(
+        search_input = st.text_input(
             "Search by title",
-            value=st.session_state.last_search["query"],
-            placeholder="Enter a title (e.g. Matrix)",
+            placeholder="Enter a movie (e.g. The Matrix)",
             label_visibility="collapsed",
             key="search_input",
         )
@@ -128,46 +74,60 @@ with left_col:
             "🔍", help="Search movie", use_container_width=True, key="search_btn"
         )
 
-    # Do search when pressing button or when query changed
-    safe_q = q if q is not None else ""
-    if search_btn or (
-        safe_q and safe_q != st.session_state.last_search["query"] and safe_q.strip()
-    ):
-        hits = mrengine.search_titles(safe_q, limit=10)
-        st.session_state.last_search = {"query": safe_q, "results": hits}
-    else:
-        hits = st.session_state.last_search["results"]
+    # Handle search submission
+    if search_btn or search_input:
+        query = ""
+        results = []
 
-    # Render top 10 results
-    _render_search_results(hits[:10])
+        if search_input and search_input.strip():
+            query = search_input.strip()
+            with st.spinner("Searching..."):
+                results = _cached_search(query, limit=10)
+
+        st.session_state.search_results = {"query": query, "results": results}
+
+    # Display search results
+    current_query = st.session_state.search_results["query"]
+    current_results = st.session_state.search_results["results"]
+    
+    if current_query:
+        if current_results:
+            for i, movie in enumerate(current_results[:10]):
+                title = movie.get("title", "")
+                movie_id = int(movie.get("movieId"))
+                
+                col1, col2 = st.columns([8, 1])
+                with col1:
+                    st.write(f"**{title}**")
+                with col2:
+                    if st.button("➕", key=f"add_{movie_id}", help="Add to favorites", disabled=(movie_id in st.session_state.favorites)):
+                        st.session_state.favorites.append(movie_id)
+                        st.rerun()
+        else:
+            st.error("No movies found.")
 
 
 # ------- RIGHT PANEL: Favorites -------
 with right_col:
     st.subheader("Favorites")
+    
     if st.session_state.favorites:
-        # Render favorites in a vertical list with a remove button per item
-        for mid in list(st.session_state.favorites):
-            title = _get_title_for(mid)
+        for movie_id in st.session_state.favorites:
+            title = _get_title_for(movie_id)
             col1, col2 = st.columns([8, 1])
-            col1.write(f"**{title}**")
-            
-            # Use on_click callback; key must be unique and stable:
-            col2.button(
-                "❌",
-                help="Remove from favorites",
-                key=f"rm_{mid}",
-                on_click=_remove_favorite_cb,
-                args=(mid,),
-            )
-
-        # Add a remove all button
-        st.button(
-            "❌ All",
-            help="Remove all favorites",
-            key="clear_favorites_btn",
-            on_click=_clear_favorites_cb,
-        )
+            with col1:
+                st.write(f"**{title}**")
+            with col2:
+                if st.button("❌", key=f"remove_{movie_id}", help="Remove"):
+                    st.session_state.favorites.remove(movie_id)
+                    st.session_state.last_recs = []  # Clear recommendations
+                    st.rerun()
+        
+        # Clear all button
+        if st.button("❌ Clear All", help="Remove all favorites"):
+            st.session_state.favorites = []
+            st.session_state.last_recs = []
+            st.rerun()
 
 
 # ------- BOTTOM PANEL: Recommendations -------
@@ -175,29 +135,28 @@ st.write("---")
 st.subheader("Recommendations")
 
 if not st.session_state.favorites:
-    st.info("No favorites yet — add movies from the search results.")
+    st.info("Add some favorite movies to get personalized recommendations.")
 else:
-    n = st.slider(
-        "How many recommendations would you like?", min_value=5, max_value=20, value=5
-    )
-    if st.button("🪄 Recommend", type="primary", key="recommend_btn"):
+    num_recs = st.slider("Number of recommendations", 5, 20, 10)
+    
+    if st.button("🪄 Get Recommendations", type="primary"):
         with st.spinner("Computing recommendations..."):
             recs = mrengine.recommend_from_favorites(
-                st.session_state.favorites, top_n=n
+                st.session_state.favorites, top_n=num_recs
             )
             st.session_state.last_recs = recs
 
-    # Show last computed recommendations
+    # Display recommendations
     if st.session_state.last_recs:
-        # Display as cards list
+        st.write("**Your Recommendations:**")
         for title, score in st.session_state.last_recs:
-            c1, c2 = st.columns([8, 1])
-            with c1:
-                c1.write(f"**{title}**")
-            with c2:
-                c2.caption(f"score: {score:.4f}")
+            col1, col2 = st.columns([8, 1])
+            with col1:
+                st.write(f"**{title}**")
+            with col2:
+                st.caption(f"{score:.3f}")
 
 
-# ---------- PAGE FOOTER ----------
+# ---------- FOOTER ----------
 st.write("---")
-st.caption("Tip: For better matches try several favorites of different genres.")
+st.caption("💡 Tip: Add movies from different genres for better recommendations!")
