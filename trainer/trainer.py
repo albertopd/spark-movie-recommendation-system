@@ -1,10 +1,14 @@
-"""
-Train an ALS model with PySpark and export item (movie) factors + mapping table.
 
-Outputs to `--out` directory:
- - movie_factors.npy    # NumPy array shape (N_movies, rank)
- - movie_id_index.csv   # columns: movieId,index,original_title
- - optionally: als_model (Spark model)
+"""
+trainer.py
+-----------
+Train an ALS (Alternating Least Squares) collaborative filtering model using PySpark on the MovieLens dataset.
+Exports movie factor vectors and a mapping table for use in the recommendation web app.
+
+Outputs to the specified directory:
+ - movie_factors.npy: NumPy array of movie factor vectors (N_movies, rank)
+ - movie_id_index.csv: CSV mapping of movieId, index, and title
+ - als_model/: (optional) Exported Spark ALS model
 """
 
 import argparse
@@ -16,21 +20,44 @@ import numpy as np
 import pandas as pd
 
 
-def train(movies_csv, ratings_csv, out_dir, rank=20, regParam=0.1, maxIter=10):
-    spark = SparkSession.builder.appName("movie-als-training").getOrCreate()
+def train(movies_csv, ratings_csv, out_dir, rank=10, regParam=0.1, maxIter=10):
+    """
+    Train an ALS model on the given ratings and movies data, and export model artifacts.
+
+    Args:
+        movies_csv (str): Path to movies.csv file (must have columns: movieId, title)
+        ratings_csv (str): Path to ratings.csv file (must have columns: userId, movieId, rating)
+        out_dir (str): Output directory for artifacts
+        rank (int): Number of latent factors for ALS
+        regParam (float): Regularization parameter for ALS
+        maxIter (int): Number of ALS training iterations
+
+    Outputs:
+        - movie_factors.npy: Numpy array of movie factor vectors
+        - movie_id_index.csv: Mapping of movieId, index, and title
+        - als_model/: (optional) Exported Spark ALS model
+    """
+    spark = SparkSession.builder \
+        .appName("movie-als-training") \
+        .config("spark.driver.memory", "4g") \
+        .config("spark.executor.memory", "4g") \
+        .config("spark.driver.maxResultSize", "2g") \
+        .config("spark.sql.adaptive.enabled", "true") \
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
+        .config("spark.sql.shuffle.partitions", "200") \
+        .config("spark.default.parallelism", "200") \
+        .getOrCreate()
 
     # Load movies metadata
-    movies_raw = spark.read.option("header", True).csv(movies_csv)
-
-    # Filter rows where `id` is only digits before casting
     movies = (
-        movies_raw
-        .filter(col("id").rlike("^[0-9]+$"))  # keep only valid numeric IDs
+        spark.read.option("header", True).csv(movies_csv)
         .select(
-            col("id").cast("int").alias("movieId"),
-            col("original_title")
+            col("movieId").cast("int"),
+            col("title").cast("string")
         )
-        .dropna()
+        .dropDuplicates(["movieId"])
     )
 
     # Load ratings and cast types
@@ -49,7 +76,7 @@ def train(movies_csv, ratings_csv, out_dir, rank=20, regParam=0.1, maxIter=10):
     ratings = ratings.join(movies_ids, on="movieId", how="inner")
 
     # Repartition for faster work locally
-    ratings = ratings.repartition(8)
+    ratings = ratings.repartition(200)
 
     # Train ALS
     als = ALS(
@@ -61,22 +88,17 @@ def train(movies_csv, ratings_csv, out_dir, rank=20, regParam=0.1, maxIter=10):
         regParam=regParam,
         coldStartStrategy="drop",
         nonnegative=True,
+        checkpointInterval=10
     )
 
     model = als.fit(ratings)
 
-    # Extract item factors
+    # Extract item factors and convert to pandas
     item_factors = model.itemFactors  # columns: id, features
-
-    # Convert to pandas and save as numpy array
     item_pd = item_factors.toPandas()
-    # Ensure id column is int
-    item_pd["id"] = item_pd["id"].astype(int)
 
     # Join titles so we can build an ordered mapping
     movies_pd = movies.toPandas()
-    movies_pd["movieId"] = movies_pd["movieId"].astype(int)
-
     merged = pd.merge(movies_pd, item_pd, left_on="movieId", right_on="id", how="inner")
 
     # Create deterministic index (0..N-1) so numpy array rows align with this csv
@@ -89,10 +111,10 @@ def train(movies_csv, ratings_csv, out_dir, rank=20, regParam=0.1, maxIter=10):
     np.save(os.path.join(out_dir, "movie_factors.npy"), features)
 
     # Save mapping
-    mapping_df = merged[["movieId", "index", "original_title"]]
+    mapping_df = merged[["movieId", "index", "title"]]
     mapping_df.to_csv(os.path.join(out_dir, "movie_id_index.csv"), index=False)
 
-    # Save Spark model (optional)
+    # Save Spark model
     try:
         model_path = os.path.join(out_dir, "als_model")
         model.write().overwrite().save(model_path)
@@ -104,13 +126,18 @@ def train(movies_csv, ratings_csv, out_dir, rank=20, regParam=0.1, maxIter=10):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--movies", required=True)
-    parser.add_argument("--ratings", required=True)
-    parser.add_argument("--out", default="artifacts")
-    parser.add_argument("--rank", type=int, default=20)
-    parser.add_argument("--reg", type=float, default=0.1)
-    parser.add_argument("--iters", type=int, default=10)
+    """
+    Command-line interface for training the ALS model.
+    Example usage:
+        python trainer.py --movies data/movies.csv --ratings data/ratings.csv --out artifacts/
+    """
+    parser = argparse.ArgumentParser(description="Train ALS model and export artifacts for movie recommendation system.")
+    parser.add_argument("--movies", required=True, help="Path to movies.csv")
+    parser.add_argument("--ratings", required=True, help="Path to ratings.csv")
+    parser.add_argument("--out", default="artifacts", help="Output directory for artifacts")
+    parser.add_argument("--rank", type=int, default=20, help="ALS rank (number of latent factors)")
+    parser.add_argument("--reg", type=float, default=0.1, help="ALS regularization parameter")
+    parser.add_argument("--iters", type=int, default=10, help="ALS max iterations")
     args = parser.parse_args()
 
     train(args.movies, args.ratings, args.out, rank=args.rank, regParam=args.reg, maxIter=args.iters)
