@@ -20,6 +20,10 @@ import numpy as np
 import pandas as pd
 
 
+MOVIE_FACTORS_NPY = "movie_factors.npy"
+MOVIE_INDEX_CSV = "movie_index_map.csv"
+
+
 def train(movies_csv, ratings_csv, out_dir, rank=10, regParam=0.1, maxIter=10):
     """
     Train an ALS model on the given ratings and movies data, and export model artifacts.
@@ -108,11 +112,11 @@ def train(movies_csv, ratings_csv, out_dir, rank=10, regParam=0.1, maxIter=10):
     features = np.vstack(merged["features"].tolist())
 
     os.makedirs(out_dir, exist_ok=True)
-    np.save(os.path.join(out_dir, "movie_factors.npy"), features)
+    np.save(os.path.join(out_dir, MOVIE_FACTORS_NPY), features)
 
     # Save mapping
-    mapping_df = merged[["movieId", "index", "title"]]
-    mapping_df.to_csv(os.path.join(out_dir, "movie_id_index.csv"), index=False)
+    mapping_df = merged[["title", "index"]]
+    mapping_df.to_csv(os.path.join(out_dir, MOVIE_INDEX_CSV), index=False)
 
     # Save Spark model
     try:

@@ -4,12 +4,12 @@ Allows users to search for movies, add favorites, and get personalized recommend
 """
 
 import streamlit as st
-from app.utils import MovieRecommendationsEngine
+from app.movie_recom_engine import MovieRecommendationsEngine
 
 
 # ---------- CONFIG ----------
-MAPPING_CSV = "artifacts/movie_id_index.csv"
-FACTORS_NPY = "artifacts/movie_factors.npy"
+MOVIE_FACTORS_NPY = "artifacts/movie_factors.npy"
+MOVIE_INDEX_MAP_CSV = "artifacts/movie_index_map.csv"
 
 st.set_page_config(page_title="Movie Recommendations", layout="wide")
 
@@ -18,24 +18,16 @@ st.set_page_config(page_title="Movie Recommendations", layout="wide")
 @st.cache_data
 def _load_recommendations_engine():
     """Load the MovieRecommendationsEngine with caching."""
-    return MovieRecommendationsEngine(MAPPING_CSV, FACTORS_NPY)
+    return MovieRecommendationsEngine(MOVIE_INDEX_MAP_CSV, MOVIE_FACTORS_NPY)
 
 
 try:
-    mrengine = _load_recommendations_engine()
+    _mrengine = _load_recommendations_engine()
 except Exception as e:
     st.error(
-        f"Could not load recommendations engine artifacts. Make sure `{MAPPING_CSV}` and `{FACTORS_NPY}` exist.\n\nError: {e}"
+        f"Could not load recommendations engine artifacts. Make sure `{MOVIE_INDEX_MAP_CSV}` and `{MOVIE_FACTORS_NPY}` exist.\n\nError: {e}"
     )
     st.stop()
-
-
-@st.cache_data(ttl=600)
-def _cached_search(query: str, limit: int = 10):
-    """Cache mrengine.search_titles results for a given query."""
-    if not query or not query.strip():
-        return []
-    return mrengine.search_titles(query.strip(), limit=limit)
 
 
 # ---------- SESSION STATE ----------
@@ -48,12 +40,12 @@ if "last_recs" not in st.session_state:
 
 
 # ---------- HELPERS ----------
-def _get_title_for(movieid: int) -> str:
-    """Get the movie title for a given movieId."""
-    row = mrengine.mapping[mrengine.mapping["movieId"] == movieid]
+def _get_title_for(movie_index: int) -> str:
+    """Get the movie title for a given movie_index."""
+    row = _mrengine.mapping[_mrengine.mapping["index"] == movie_index]
     if len(row):
         return row["title"].values[0]
-    return str(movieid)
+    return ""
 
 
 # ---------- PAGE HEADER ----------
@@ -88,7 +80,7 @@ with left_col:
         if search_input and search_input.strip():
             query = search_input.strip()
             with st.spinner("Searching..."):
-                results = _cached_search(query, limit=10)
+                results = _mrengine.search_titles(query.strip(), limit=10)
 
         st.session_state.search_results = {"query": query, "results": results}
 
@@ -100,14 +92,14 @@ with left_col:
         if current_results:
             for i, movie in enumerate(current_results[:10]):
                 title = movie.get("title", "")
-                movie_id = int(movie.get("movieId"))
+                movie_index = int(movie.get("index"))
                 
                 col1, col2 = st.columns([8, 1])
                 with col1:
                     st.write(f"**{title}**")
                 with col2:
-                    if st.button("➕", key=f"add_{movie_id}", help="Add to favorites", disabled=(movie_id in st.session_state.favorites)):
-                        st.session_state.favorites.append(movie_id)
+                    if st.button("➕", key=f"add_{movie_index}", help="Add to favorites", disabled=(movie_index in st.session_state.favorites)):
+                        st.session_state.favorites.append(movie_index)
                         st.rerun()
         else:
             st.error("No movies found.")
@@ -118,14 +110,14 @@ with right_col:
     st.subheader("Favorites")
     
     if st.session_state.favorites:
-        for movie_id in st.session_state.favorites:
-            title = _get_title_for(movie_id)
+        for movie_index in st.session_state.favorites:
+            title = _get_title_for(movie_index)
             col1, col2 = st.columns([8, 1])
             with col1:
                 st.write(f"**{title}**")
             with col2:
-                if st.button("❌", key=f"remove_{movie_id}", help="Remove"):
-                    st.session_state.favorites.remove(movie_id)
+                if st.button("❌", key=f"remove_{movie_index}", help="Remove"):
+                    st.session_state.favorites.remove(movie_index)
                     st.session_state.last_recs = []  # Clear recommendations
                     st.rerun()
         
@@ -147,7 +139,7 @@ else:
     
     if st.button("🪄 Get Recommendations", type="primary"):
         with st.spinner("Computing recommendations..."):
-            recs = mrengine.recommend_from_favorites(
+            recs = _mrengine.recommend_from_favorites(
                 st.session_state.favorites, top_n=num_recs
             )
             st.session_state.last_recs = recs
