@@ -99,11 +99,11 @@ def train(movies_csv, ratings_csv, out_dir, rank=10, regParam=0.1, maxIter=10):
 
     # Extract item factors and convert to pandas
     item_factors = model.itemFactors  # columns: id, features
-    item_pd = item_factors.toPandas()
+    item_factors_pd = item_factors.toPandas()
 
     # Join titles so we can build an ordered mapping
     movies_pd = movies.toPandas()
-    merged = pd.merge(movies_pd, item_pd, left_on="movieId", right_on="id", how="inner")
+    merged = pd.merge(movies_pd, item_factors_pd, left_on="movieId", right_on="id", how="inner")
 
     # Create deterministic index (0..N-1) so numpy array rows align with this csv
     merged = merged.sort_values("movieId").reset_index(drop=True)

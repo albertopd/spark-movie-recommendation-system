@@ -82,7 +82,8 @@ with left_col:
             with st.spinner("Searching..."):
                 results = _mrengine.search_titles(query.strip(), limit=10)
 
-        st.session_state.search_results = {"query": query, "results": results}
+        st.session_state.search_results["query"] = query
+        st.session_state.search_results["results"] = results
 
     # Display search results
     current_query = st.session_state.search_results["query"]
@@ -92,7 +93,7 @@ with left_col:
         if current_results:
             for i, movie in enumerate(current_results[:10]):
                 title = movie.get("title", "")
-                movie_index = int(movie.get("index"))
+                movie_index = int(movie.get("index")) # type: ignore
                 
                 col1, col2 = st.columns([8, 1])
                 with col1:
@@ -146,12 +147,16 @@ else:
 
     # Display recommendations
     if st.session_state.last_recs:
-        for title, score in st.session_state.last_recs:
-            col1, col2 = st.columns([8, 1])
-            with col1:
-                st.write(f"**{title}**")
-            with col2:
-                st.caption(f"{score:.3f}")
+        st.write("")
+        
+        # Build the ordered list in HTML
+        html_list = "<ol>"
+        for title, _ in st.session_state.last_recs:
+            html_list += f"<li><b>{title}</b></li>"
+        html_list += "</ol>"
+
+        # Render it
+        st.markdown(html_list, unsafe_allow_html=True)
 
 
 # ---------- FOOTER ----------

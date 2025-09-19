@@ -49,10 +49,12 @@ class MovieRecommendationsEngine:
         q = query.lower().strip()
         if not q:
             return []
+        
         candidates = self.mapping[
             self.mapping["title"].str.lower().str.contains(q, na=False)
         ]
-        return candidates.iloc[:limit].to_dict(orient="records")
+        
+        return candidates.head(limit).to_dict(orient="records")
 
     def recommend_from_favorites(
         self, favorite_movie_indexes: List[int], top_n: int = 10
