@@ -207,7 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 # Ignore data files
-data/
+data/*.csv
 
 # Ignore artifacts
 artifacts/**/*
